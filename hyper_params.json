@@ -1,0 +1,16 @@
+{
+  "task_name": "mrpc",
+  "data_dir": "DATA/MRPC",
+  "output_dir": "tmp/MRPC/",
+  "total_training_steps": 10,
+  "fine_tune_steps": 2,
+  "delta": 2,
+  "pruning_init_sparse": 0,
+  "pruning_final_sparse": 75,
+  "learning_rate": 2e-05,
+  "weight_decay": 0.0,
+  "adam_epsilon": 1e-08,
+  "max_grad_norm": 1.0,
+  "warmup_steps": 0,
+  "save_steps": 500
+}
