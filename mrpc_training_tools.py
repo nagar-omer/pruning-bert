@@ -1,7 +1,5 @@
-import dataclasses
 import logging
 import os
-import sys
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional
 import numpy as np
@@ -17,8 +15,6 @@ from transformers import (
     set_seed,
 )
 import json
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 @dataclass
@@ -53,51 +49,54 @@ def set_logger():
 
 
 def load_params(user_params):
-    default_file = os.path.join(__file__.replace("/", os.sep).rsplit(os.sep, 1)[0], "default_config.json")
+    """
+    generate model, data and training arg-opjects according to user hyper-parameters
+    """
+    # params parser
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
-    default_params = json.loads(open(default_file, "rt", encoding="utf-8").read())
+
     # override default params
+    default_file = os.path.join(__file__.replace("/", os.sep).rsplit(os.sep, 1)[0], "source_attrib.json")
+    default_params = json.loads(open(default_file, "rt", encoding="utf-8").read())
     for k, v in user_params.items():
         default_params[k] = v
+    default_params["num_train_epochs"] = user_params["epoch_per_training_step"]
 
-    default_params["num_train_epochs"] = user_params["delta"]
+    # create alternative json and parse it
     json.dump(default_params, open("temp_params.json", "wt"))
     model_args, data_args, training_args = parser.parse_json_file(json_file="temp_params.json")
     os.remove("temp_params.json")
-    logger.info("Training/evaluation parameters %s", training_args)
+
+    training_args.do_eval = False
     return model_args, data_args, training_args
 
 
-def load_datasets(data_args, training_args):
+def load_datasets(data_args, model_args):
+    # set tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
-        'bert-base-uncased',
+        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=None,
     )
     # Get datasets
-    train_dataset = (
-        GlueDataset(data_args, tokenizer=tokenizer, cache_dir=None)
-    )
-    eval_dataset = (
-        GlueDataset(data_args, tokenizer=tokenizer, mode="dev", cache_dir=model_args.cache_dir)
-        if training_args.do_eval
-        else None
-    )
-    test_dataset = (
-        GlueDataset(data_args, tokenizer=tokenizer, mode="test", cache_dir=model_args.cache_dir)
-        if training_args.do_predict
-        else None
-    )
+    train_dataset = GlueDataset(data_args, tokenizer=tokenizer, cache_dir=model_args.cache_dir)
+    eval_dataset = GlueDataset(data_args, tokenizer=tokenizer, mode="dev", cache_dir=model_args.cache_dir)
+    test_dataset = GlueDataset(data_args, tokenizer=tokenizer, mode="test", cache_dir=model_args.cache_dir)
+
     return train_dataset, eval_dataset, test_dataset
 
 
 def load_model(data_args, model_args):
+    # load configuration
     config = AutoConfig.from_pretrained(
         model_args.model_name_or_path,
         num_labels=glue_tasks_num_labels[data_args.task_name],
         finetuning_task=data_args.task_name,
         cache_dir=model_args.cache_dir,
     )
-
+    # DEBUG use only one layer
+    # config.num_hidden_layers = 1
+    # config.num_attention_heads = 1
+    # load model according to configuration
     model = AutoModelForSequenceClassification.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -115,6 +114,7 @@ def build_compute_metrics_fn(task_name: str) -> Callable[[EvalPrediction], Dict]
 
 
 def set_trainer(model, data_args, training_args, train_dataset, eval_dataset):
+    # set training object
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -129,14 +129,9 @@ def train(trainer, model_args):
     trainer.train(
         model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None
     )
-    trainer.save_model()
-    # For convenience, we also re-save the tokenizer to the same directory,
-    # so that you can share your model easily on huggingface.co/models =)
-    # if trainer.is_world_master():
-    #     tokenizer.save_pretrained(training_args.output_dir)
 
 
-def eval(trainer, eval_dataset):
+def evaluate(trainer, eval_dataset, training_args):
     trainer.compute_metrics = build_compute_metrics_fn(eval_dataset.args.task_name)
     eval_result = trainer.evaluate(eval_dataset=eval_dataset)
 
@@ -145,15 +140,13 @@ def eval(trainer, eval_dataset):
     )
     if trainer.is_world_master():
         with open(output_eval_file, "w") as writer:
-            logger.info("***** Eval results {} *****".format(eval_dataset.args.task_name))
             for key, value in eval_result.items():
-                logger.info("  %s = %s", key, value)
                 writer.write("%s = %s\n" % (key, value))
 
     return eval_result
 
 
-def predict(trainer, test_dataset):
+def predict(trainer, test_dataset, training_args):
     predictions = np.argmax(trainer.predict(test_dataset=test_dataset).predictions, axis=1)
 
     output_test_file = os.path.join(
@@ -161,7 +154,6 @@ def predict(trainer, test_dataset):
     )
     if trainer.is_world_master():
         with open(output_test_file, "w") as writer:
-            logger.info("***** Test results {} *****".format(test_dataset.args.task_name))
             writer.write("index\tprediction\n")
             for index, item in enumerate(predictions):
                 item = test_dataset.get_labels()[item]
@@ -169,15 +161,21 @@ def predict(trainer, test_dataset):
 
 
 def model_params_count(model):
+    """
+    count model params by layers
+    """
     params = list(model.named_parameters())
     count = {}
+    # loop all layers
     for p in params:
+        # get name and number of parameters (scaled by M)
         layer_name = ".".join(p[0].split(".")[:2])
-        param_count = (p[1].size()[0]) if len(p[1].size()) == 1 else (p[1].size()[0] * p[1].size()[1])
+        param_count = p[1].view(-1).size()[0]
         count[layer_name] = count.get(layer_name, 0) + param_count
     for k, v in count.items():
         count[k] /= 1000000
 
+    # print and return
     for k, v in count.items():
         print('{:<30}'.format(k), v)
     return count
@@ -185,9 +183,9 @@ def model_params_count(model):
 
 if __name__ == '__main__':
     set_logger()
-    user_params = json.loads(open("hyper_params.json", "rt", encoding="utf-8").read())
-    model_args, data_args, training_args = load_params(user_params)
-    train_dataset, eval_dataset, test_dataset = load_datasets(data_args, training_args)
-    model = load_model(data_args, model_args)
-    model_params_count(model)
+    user_params_ = json.loads(open("hyper_params.json", "rt", encoding="utf-8").read())
+    model_args_, data_args_, training_args_ = load_params(user_params_)
+    train_dataset_, eval_dataset_, test_dataset_ = load_datasets(data_args_, model_args_)
+    model_ = load_model(data_args_, model_args_)
+    model_params_count(model_)
     e = 0

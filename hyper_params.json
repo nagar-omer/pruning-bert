@@ -1,16 +1,14 @@
 {
   "task_name": "mrpc",
-  "data_dir": "DATA/MRPC",
+  "data_dir": "data/MRPC",
   "output_dir": "tmp/MRPC/",
-  "total_training_steps": 10,
-  "fine_tune_steps": 2,
-  "delta": 2,
+  "total_training_steps": 50,
+  "fine_tune_steps": 5,
+  "epoch_per_training_step": 5,
   "pruning_init_sparse": 0,
-  "pruning_final_sparse": 75,
-  "learning_rate": 2e-05,
+  "pruning_final_sparse": 80,
+  "learning_rate": 1e-4,
   "weight_decay": 0.0,
-  "adam_epsilon": 1e-08,
-  "max_grad_norm": 1.0,
-  "warmup_steps": 0,
-  "save_steps": 500
+  "adam_epsilon": 1e-8,
+  "max_grad_norm": 1.0
 }
