@@ -2,7 +2,8 @@ import csv
 import datetime
 import os
 import torch
-from mrpc_training_tools import set_logger, load_params, load_datasets, load_model, set_trainer, train, evaluate
+from mrpc_training_tools import set_logger, load_params, load_datasets, load_model, set_trainer, train, evaluate, \
+    check_sparsity
 from sparse_pruning import SparsePruning
 import json
 
@@ -27,27 +28,37 @@ def run(hyper_params="hyper_params.json"):
 
     # prune -> train -> predict loop
     for i in range(user_params['total_training_steps']):
-        pruning.update_sparsity()
         train(trainer, model_args)
         eval_results = evaluate(trainer, eval_dataset, training_args)
 
+        # print weights sparsity
+        print(i, "="*50, "sparsity", pruning.curr_sparsity)
+        check_sparsity(model)
+        print("=" * 50)
         # show intermediate result
         for k, v in eval_results.items():
             print('{:<30}'.format(k), v)
+
         # save measures and model parameters
         results.append([i, pruning.curr_sparsity] + [eval_results[measure] for measure in measures[2:]])
-        dump_model(model, i, base)
+        dump_model(model, i, base, pruning)
+
+        # update pruning rate
+        pruning.update_sparsity()
+
     # save measures scv and sparsity graph
     to_csv(results, os.path.join(base, "results_{}".format(creation_time) + ".csv"))
     pruning.plot_sparsity(base)
 
 
-def dump_model(model, train_step, base):
+def dump_model(model, train_step, base, pruning):
     os.makedirs(os.path.join(base, "pt_state_dict"), exist_ok=True)
     os.makedirs(os.path.join(base, "ONNX"), exist_ok=True)
 
     # as pt
     torch.save({
+        'sparsity': pruning.curr_sparsity,
+        'pruning': pruning,
         'training_step': train_step,
         'model_state_dict': model.state_dict(),
     }, os.path.join(base, "pt_state_dict", "model_state_dict_" + str(train_step) + ".pt"))

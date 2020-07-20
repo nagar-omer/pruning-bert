@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional
 import numpy as np
+import torch
 from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer, EvalPrediction, GlueDataset
 from transformers import GlueDataTrainingArguments as DataTrainingArguments
 from transformers import (
@@ -93,7 +94,7 @@ def load_model(data_args, model_args):
         finetuning_task=data_args.task_name,
         cache_dir=model_args.cache_dir,
     )
-    # DEBUG use only one layer
+    # ============================= DEBUG use only one layer ==============================================
     # config.num_hidden_layers = 1
     # config.num_attention_heads = 1
     # load model according to configuration
@@ -179,6 +180,13 @@ def model_params_count(model):
     for k, v in count.items():
         print('{:<30}'.format(k), v)
     return count
+
+
+def check_sparsity(model):
+    for layer_name, parameters in model.named_parameters():
+        sparse_count = torch.where(parameters == 0)[0].shape[0]
+        param_count = parameters.view(-1).shape[0]
+        print('{:<50}'.format(layer_name), round(sparse_count/param_count, 2))
 
 
 if __name__ == '__main__':

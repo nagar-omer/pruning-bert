@@ -23,7 +23,7 @@ class SparsePruning:
         """
         # get pruning layers
         self._to_prune = self._pruning_layers(model, prune_layers)
-
+        self._model = model
         # set variables according to the paper's notation
         self._st = initial_sparsity if t0 == 0 else 0
         self._si = initial_sparsity
@@ -36,12 +36,39 @@ class SparsePruning:
         self._n = training_steps * epoch_per_step
         self._delta = 1 / epoch_per_step
         self._sparse_vec = []
+        self._update_masks()
 
         plt.style.use('ggplot')
 
     @property
+    def masks(self):
+        return self._masks
+
+    @property
     def curr_sparsity(self):
         return self._st
+
+    def _update_masks(self):
+        """
+        set a mask for each of the pruned layers
+        maskes are being updated at the beginning of each training step
+        """
+        masks = {}
+        for layer_name, parameters in self._model.named_parameters():
+            # if the layer shouldn't be pruned -> skip
+            if not self._is_prune_layer(layer_name):
+                continue
+            # calculate how many parameters to prune form the layer according to s_t (st is a percentage - 0-100)
+            st = int(parameters.view(-1).shape[0] * self._st / 100)
+            # calculate masking bar according to the the weight's magnitude
+
+            bar = parameters.abs().view(-1).topk(parameters.view(-1).shape[0] - st)[0].min()
+            # set mask
+            mask_positive_indices = torch.where(parameters.abs() >= bar)
+            mask = torch.zeros(parameters.shape).to(self._model.device)
+            mask[mask_positive_indices] = 1
+            masks[layer_name] = mask
+        self._masks = masks
 
     def update_sparsity(self):
         """
@@ -54,6 +81,7 @@ class SparsePruning:
         elif self._t > self._t0:
             self._st = self._sf + (self._si - self._sf)*((1 - ((self._t - self._t0)/(self._n * self._delta)))**3)
         self._sparse_vec.append((self._t, self._st))
+        self._update_masks()
 
     def plot_sparsity(self, plot_dir="."):
         """
@@ -96,19 +124,8 @@ class SparsePruning:
             # if the layer shouldn't be pruned -> skip
             if not self._is_prune_layer(layer_name):
                 continue
-            # calculate how many parameters to prune form the layer according to s_t (st is a percentage - 0-100)
-            st = int(parameters.abs().view(-1).shape[0] * self._st / 100)
-            # if there is nothing to prune -> skip
-            if st == 0:
-                continue
-            # calculate masking bar according to the the weight's magnitude
-            bar = parameters.abs().view(-1).topk(st)[0].min()
-            # set mask
-            mask_positive_indices = torch.where(parameters.abs() < bar)
-            mask = torch.zeros(parameters.shape).to(module.device)
-            mask[mask_positive_indices] = 1
             # apply mask to layer's weights
-            module.state_dict()[layer_name].copy_(torch.mul(parameters, mask))
+            module.state_dict()[layer_name].copy_(torch.mul(parameters, self._masks[layer_name]))
 
 
 if __name__ == '__main__':
