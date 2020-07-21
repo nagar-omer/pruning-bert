@@ -5,4 +5,4 @@ use bert-pruning.ipynb
 use eval_and_predict.ipynb
 
 ## hyper params
-you can your own configuration by modifying hyper_params.json
+you can set your own configuration by modifying hyper_params.json
