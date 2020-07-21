@@ -132,27 +132,14 @@ def train(trainer, model_args):
     )
 
 
-def evaluate(trainer, eval_dataset, training_args):
+def evaluate(trainer, eval_dataset):
     trainer.compute_metrics = build_compute_metrics_fn(eval_dataset.args.task_name)
     eval_result = trainer.evaluate(eval_dataset=eval_dataset)
-
-    output_eval_file = os.path.join(
-        training_args.output_dir, f"eval_results_{eval_dataset.args.task_name}.txt"
-    )
-    if trainer.is_world_master():
-        with open(output_eval_file, "w") as writer:
-            for key, value in eval_result.items():
-                writer.write("%s = %s\n" % (key, value))
-
     return eval_result
 
 
-def predict(trainer, test_dataset, training_args):
+def predict(trainer, test_dataset, output_test_file):
     predictions = np.argmax(trainer.predict(test_dataset=test_dataset).predictions, axis=1)
-
-    output_test_file = os.path.join(
-        training_args.output_dir, f"test_results_{test_dataset.args.task_name}.txt"
-    )
     if trainer.is_world_master():
         with open(output_test_file, "w") as writer:
             writer.write("index\tprediction\n")

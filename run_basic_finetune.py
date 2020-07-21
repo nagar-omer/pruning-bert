@@ -29,7 +29,7 @@ def run(hyper_params="hyper_params.json"):
     # prune -> train -> predict loop
     for i in range(user_params['total_training_steps']):
         train(trainer, model_args)
-        eval_results = evaluate(trainer, eval_dataset, training_args)
+        eval_results = evaluate(trainer, eval_dataset)
 
         # print weights sparsity
         print(i, "="*50, "sparsity", pruning.curr_sparsity)
